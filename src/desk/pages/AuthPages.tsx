@@ -131,15 +131,37 @@ export function RegisterPage() {
   const onSubmit = async (data: RegisterFormData) => {
   setServerError('');
   try {
-    // Step 1: Sign up
+    // Step 1: Sign up only — no DB writes yet
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: data.email,
       password: data.password,
+      options: {
+        data: {
+          // Pass registration data as metadata
+          full_name: data.full_name,
+          role: data.role,
+          company_name: data.company_name || null,
+        }
+      }
     });
     if (authError) throw authError;
-    if (!authData.user) throw new Error('No user returned from signup');
+    if (!authData.user) throw new Error('No user returned');
 
-    // Step 2: Create company if needed
+    // Step 2: Wait for session to be fully established
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Session timeout')), 10000);
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          if (event === 'SIGNED_IN' && session?.user?.id === authData.user!.id) {
+            clearTimeout(timeout);
+            subscription.unsubscribe();
+            resolve();
+          }
+        }
+      );
+    });
+
+    // Step 3: Session is now fully locked — safe to write to DB
     let companyId: string | null = null;
     if ((data.role === 'manager' || data.role === 'agent') && data.company_name) {
       const slug = data.company_name.toLowerCase().replace(/\s+/g, '-');
@@ -152,7 +174,7 @@ export function RegisterPage() {
       companyId = company.id;
     }
 
-    // Step 3: Insert user profile
+    // Step 4: Insert user profile
     const { error: profileError } = await supabase
       .from('users')
       .insert({
@@ -165,14 +187,14 @@ export function RegisterPage() {
       });
     if (profileError) throw new Error(`Profile error: ${profileError.message}`);
 
-    // Step 4: Fetch the profile back
+    // Step 5: Fetch complete profile
     const { data: profile, error: fetchError } = await supabase
       .from('users')
       .select('*, company:companies(*)')
       .eq('id', authData.user.id)
-      .maybeSingle(); // ← use maybeSingle, not single
+      .maybeSingle();
     if (fetchError) throw new Error(`Fetch error: ${fetchError.message}`);
-    if (!profile) throw new Error('Profile was not saved. Check RLS insert policy.');
+    if (!profile) throw new Error('Profile not saved. Check RLS policy.');
 
     setUser(profile as User);
     if (data.role === 'customer') navigate('/desk/portal');
