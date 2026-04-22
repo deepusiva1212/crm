@@ -67,7 +67,7 @@ export function LoginPage() {
         .from('users')
         .select('*, company:companies(*)')
         .eq('id', authData.user.id)
-        .single();
+        .maybeSingle();
       if (profileError) throw profileError;
       setUser(profile as User);
       const role = profile.role;
