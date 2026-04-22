@@ -66,8 +66,8 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
           .from('users')
           .select('*, company:companies(*)')
           .eq('id', session.user.id)
-          .single();
-        setUser(profile as User);
+          .maybeSingle();
+        if (profile) setUser(profile as User);
       }
       setLoading(false);
     });
@@ -83,8 +83,8 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
           .from('users')
           .select('*, company:companies(*)')
           .eq('id', session.user.id)
-          .single();
-        setUser(profile as User);
+          .maybeSingle();
+        if (profile) setUser(profile as User);
       }
     });
 

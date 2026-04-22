@@ -129,49 +129,60 @@ export function RegisterPage() {
   const role = watch('role');
 
   const onSubmit = async (data: RegisterFormData) => {
-    setServerError('');
-    try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: data.email,
-        password: data.password,
-      });
-      if (authError) throw authError;
-      if (!authData.user) throw new Error('Signup failed');
+  setServerError('');
+  try {
+    // Step 1: Sign up
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: data.email,
+      password: data.password,
+    });
+    if (authError) throw authError;
+    if (!authData.user) throw new Error('No user returned from signup');
 
-      let companyId: string | null = null;
-      if ((data.role === 'manager' || data.role === 'agent') && data.company_name) {
-        const slug = data.company_name.toLowerCase().replace(/\s+/g, '-');
-        const { data: company, error: companyError } = await supabase
-          .from('companies')
-          .insert({ name: data.company_name, slug, plan: 'free' })
-          .select()
-          .single();
-        if (companyError) throw companyError;
-        companyId = company.id;
-      }
-
-      const { data: profile, error: profileError } = await supabase
-        .from('users')
-        .insert({
-          id: authData.user.id,
-          email: data.email,
-          full_name: data.full_name,
-          role: data.role,
-          company_id: companyId,
-          is_active: true,
-        })
-        .select('*, company:companies(*)')
+    // Step 2: Create company if needed
+    let companyId: string | null = null;
+    if ((data.role === 'manager' || data.role === 'agent') && data.company_name) {
+      const slug = data.company_name.toLowerCase().replace(/\s+/g, '-');
+      const { data: company, error: companyError } = await supabase
+        .from('companies')
+        .insert({ name: data.company_name, slug, plan: 'free' })
+        .select()
         .single();
-      if (profileError) throw profileError;
-
-      setUser(profile as User);
-      if (data.role === 'customer') navigate('/desk/portal');
-      else if (data.role === 'agent') navigate('/desk/agent');
-      else navigate('/desk/manager');
-    } catch (err: any) {
-      setServerError(err.message || 'Registration failed.');
+      if (companyError) throw new Error(`Company error: ${companyError.message}`);
+      companyId = company.id;
     }
-  };
+
+    // Step 3: Insert user profile
+    const { error: profileError } = await supabase
+      .from('users')
+      .insert({
+        id: authData.user.id,
+        email: data.email,
+        full_name: data.full_name,
+        role: data.role,
+        company_id: companyId,
+        is_active: true,
+      });
+    if (profileError) throw new Error(`Profile error: ${profileError.message}`);
+
+    // Step 4: Fetch the profile back
+    const { data: profile, error: fetchError } = await supabase
+      .from('users')
+      .select('*, company:companies(*)')
+      .eq('id', authData.user.id)
+      .maybeSingle(); // ← use maybeSingle, not single
+    if (fetchError) throw new Error(`Fetch error: ${fetchError.message}`);
+    if (!profile) throw new Error('Profile was not saved. Check RLS insert policy.');
+
+    setUser(profile as User);
+    if (data.role === 'customer') navigate('/desk/portal');
+    else if (data.role === 'agent') navigate('/desk/agent');
+    else navigate('/desk/manager');
+
+  } catch (err: any) {
+    setServerError(err.message || 'Registration failed.');
+  }
+};
 
   return (
     <AuthShell title="Create account" subtitle="Set up your DeskCRM workspace">
