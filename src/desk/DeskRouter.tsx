@@ -5,7 +5,6 @@ import { supabase } from './lib/supabase';
 import { useAuthStore } from './store/authStore';
 import type { User } from './types';
 
-// ── Pages ──────────────────────────────────────────────────────────────────────
 import DeskLayout from './components/DeskLayout';
 import { LoginPage, RegisterPage } from './pages/AuthPages';
 import NewTicketPage from './pages/NewTicketPage';
@@ -13,35 +12,34 @@ import { CustomerPortal, TicketDetail } from './pages/TicketDetailPage';
 import AgentDashboard from './pages/AgentDashboard';
 import { TeamPage, ReportsPage } from './pages/ManagerPages';
 
-// ── QueryClient setup ─────────────────────────────────────────────────────────
-
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: {
-      staleTime: 1000 * 30,      // 30 seconds
-      gcTime: 1000 * 60 * 5,    // 5 minutes
-      retry: 1,
-    },
+    queries: { staleTime: 1000 * 30, gcTime: 1000 * 60 * 5, retry: 1 },
   },
 });
 
-// ── Auth Guard ────────────────────────────────────────────────────────────────
+// ── Loading spinner ───────────────────────────────────────────
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-950 gap-3">
+      <div className="w-8 h-8 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
+      <p className="text-sm text-gray-500 dark:text-gray-400">Loading your workspace…</p>
+    </div>
+  );
+}
 
+// ── Auth Guard ────────────────────────────────────────────────
 function RequireAuth({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user, loading } = useAuthStore();
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
-        <div className="w-6 h-6 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
+  // Always wait for auth to finish loading
+  if (loading) return <LoadingScreen />;
 
+  // Not logged in → go to login
   if (!user) return <Navigate to="/desk/login" replace />;
 
+  // Wrong role → redirect to correct dashboard
   if (roles && !roles.includes(user.role)) {
-    // Redirect to appropriate dashboard
     if (user.role === 'customer') return <Navigate to="/desk/portal" replace />;
     if (user.role === 'agent') return <Navigate to="/desk/agent" replace />;
     return <Navigate to="/desk/manager" replace />;
@@ -50,165 +48,111 @@ function RequireAuth({ children, roles }: { children: React.ReactNode; roles?: s
   return <>{children}</>;
 }
 
-// ── Bootstrap: listen to Supabase auth state ──────────────────────────────────
-
+// ── Auth Provider ─────────────────────────────────────────────
 function AuthProvider({ children }: { children: React.ReactNode }) {
   const { setUser, setLoading, darkMode } = useAuthStore();
 
   useEffect(() => {
-    // Apply saved dark mode
     document.documentElement.classList.toggle('dark', darkMode);
 
-    // Check current session
+    let mounted = true;
+
+    const fetchProfile = async (userId: string): Promise<User | null> => {
+      // Retry up to 5 times — profile may not exist yet if trigger is slow
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*, company:companies(*)')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (error) {
+          console.error('Profile fetch error:', error.message);
+          return null;
+        }
+
+        if (data) return data as User;
+
+        // Profile not ready yet — wait and retry
+        console.warn(`Profile not found (attempt ${attempt}/5), retrying…`);
+        await new Promise(r => setTimeout(r, attempt * 500));
+      }
+
+      console.error('Profile never appeared after 5 attempts');
+      return null;
+    };
+
+    // Check existing session on mount
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('*, company:companies(*)')
-          .eq('id', session.user.id)
-          .maybeSingle();
-        if (profile) setUser(profile as User);
-      }
-      setLoading(false);
-    });
+      if (!mounted) return;
 
-    // Subscribe to auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT' || !session) {
-        setUser(null);
-        return;
-      }
       if (session?.user) {
-        const { data: profile } = await supabase
-          .from('users')
-          .select('*, company:companies(*)')
-          .eq('id', session.user.id)
-          .maybeSingle();
-        if (profile) setUser(profile as User);
+        const profile = await fetchProfile(session.user.id);
+        if (mounted) {
+          setUser(profile);
+          setLoading(false);
+        }
+      } else {
+        if (mounted) setLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!mounted) return;
+
+        if (event === 'SIGNED_OUT' || !session) {
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+
+        if (event === 'SIGNED_IN' && session?.user) {
+          setLoading(true);
+          const profile = await fetchProfile(session.user.id);
+          if (mounted) {
+            setUser(profile);
+            setLoading(false);
+          }
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   return <>{children}</>;
 }
 
-// ── Main Desk Router ──────────────────────────────────────────────────────────
-
+// ── Main Router ───────────────────────────────────────────────
 export default function DeskRouter() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <Routes>
-          {/* ── Public routes ── */}
           <Route path="login" element={<LoginPage />} />
           <Route path="register" element={<RegisterPage />} />
 
-          {/* ── Protected routes ── */}
-          <Route
-            element={
-              <RequireAuth>
-                <DeskLayout />
-              </RequireAuth>
-            }
-          >
-            {/* Customer portal */}
-            <Route
-              path="portal"
-              element={
-                <RequireAuth roles={['customer']}>
-                  <CustomerPortal />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="portal/tickets/new"
-              element={
-                <RequireAuth roles={['customer', 'agent', 'manager']}>
-                  <NewTicketPage />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="portal/tickets/:id"
-              element={
-                <RequireAuth roles={['customer']}>
-                  <TicketDetail basePath="portal" />
-                </RequireAuth>
-              }
-            />
+          <Route element={<RequireAuth><DeskLayout /></RequireAuth>}>
+            <Route path="portal" element={<RequireAuth roles={['customer']}><CustomerPortal /></RequireAuth>} />
+            <Route path="portal/tickets/new" element={<RequireAuth roles={['customer','agent','manager']}><NewTicketPage /></RequireAuth>} />
+            <Route path="portal/tickets/:id" element={<RequireAuth roles={['customer']}><TicketDetail basePath="portal" /></RequireAuth>} />
 
-            {/* Agent */}
-            <Route
-              path="agent"
-              element={
-                <RequireAuth roles={['agent', 'manager']}>
-                  <AgentDashboard />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="agent/tickets"
-              element={
-                <RequireAuth roles={['agent', 'manager']}>
-                  <AgentDashboard />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="agent/tickets/:id"
-              element={
-                <RequireAuth roles={['agent', 'manager']}>
-                  <TicketDetail basePath="agent" />
-                </RequireAuth>
-              }
-            />
-            <Route path="agent/tickets/new" element={<NewTicketPage />} />
+            <Route path="agent" element={<RequireAuth roles={['agent','manager']}><AgentDashboard /></RequireAuth>} />
+            <Route path="agent/tickets" element={<RequireAuth roles={['agent','manager']}><AgentDashboard /></RequireAuth>} />
+            <Route path="agent/tickets/:id" element={<RequireAuth roles={['agent','manager']}><TicketDetail basePath="agent" /></RequireAuth>} />
+            <Route path="agent/tickets/new" element={<RequireAuth roles={['agent','manager']}><NewTicketPage /></RequireAuth>} />
 
-            {/* Manager */}
-            <Route
-              path="manager"
-              element={
-                <RequireAuth roles={['manager']}>
-                  <AgentDashboard />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="manager/tickets"
-              element={
-                <RequireAuth roles={['manager']}>
-                  <AgentDashboard />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="manager/tickets/:id"
-              element={
-                <RequireAuth roles={['manager']}>
-                  <TicketDetail basePath="manager" />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="manager/team"
-              element={
-                <RequireAuth roles={['manager']}>
-                  <TeamPage />
-                </RequireAuth>
-              }
-            />
-            <Route
-              path="manager/reports"
-              element={
-                <RequireAuth roles={['manager']}>
-                  <ReportsPage />
-                </RequireAuth>
-              }
-            />
+            <Route path="manager" element={<RequireAuth roles={['manager']}><AgentDashboard /></RequireAuth>} />
+            <Route path="manager/tickets" element={<RequireAuth roles={['manager']}><AgentDashboard /></RequireAuth>} />
+            <Route path="manager/tickets/:id" element={<RequireAuth roles={['manager']}><TicketDetail basePath="manager" /></RequireAuth>} />
+            <Route path="manager/team" element={<RequireAuth roles={['manager']}><TeamPage /></RequireAuth>} />
+            <Route path="manager/reports" element={<RequireAuth roles={['manager']}><ReportsPage /></RequireAuth>} />
 
-            {/* Default redirect */}
             <Route path="" element={<Navigate to="login" replace />} />
           </Route>
         </Routes>
