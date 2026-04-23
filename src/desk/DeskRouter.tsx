@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { supabase } from './lib/supabase';
@@ -18,7 +18,6 @@ const queryClient = new QueryClient({
   },
 });
 
-// ── Loading spinner ───────────────────────────────────────────
 function LoadingScreen() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-950 gap-3">
@@ -28,87 +27,72 @@ function LoadingScreen() {
   );
 }
 
-// ── Auth Guard ────────────────────────────────────────────────
 function RequireAuth({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user, loading } = useAuthStore();
-
-  // Always wait for auth to finish loading
   if (loading) return <LoadingScreen />;
-
-  // Not logged in → go to login
   if (!user) return <Navigate to="/desk/login" replace />;
-
-  // Wrong role → redirect to correct dashboard
   if (roles && !roles.includes(user.role)) {
     if (user.role === 'customer') return <Navigate to="/desk/portal" replace />;
     if (user.role === 'agent') return <Navigate to="/desk/agent" replace />;
     return <Navigate to="/desk/manager" replace />;
   }
-
   return <>{children}</>;
 }
 
-// ── Auth Provider ─────────────────────────────────────────────
 function AuthProvider({ children }: { children: React.ReactNode }) {
   const { setUser, setLoading, darkMode } = useAuthStore();
+  // ── KEY FIX: block rendering until initial session check is done ──
+  const [bootDone, setBootDone] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
-
     let mounted = true;
 
     const fetchProfile = async (userId: string): Promise<User | null> => {
-      // Retry up to 5 times — profile may not exist yet if trigger is slow
       for (let attempt = 1; attempt <= 5; attempt++) {
         const { data, error } = await supabase
           .from('users')
           .select('*, company:companies(*)')
           .eq('id', userId)
           .maybeSingle();
-
-        if (error) {
-          console.error('Profile fetch error:', error.message);
-          return null;
-        }
-
+        if (error) return null;
         if (data) return data as User;
-
-        // Profile not ready yet — wait and retry
-        console.warn(`Profile not found (attempt ${attempt}/5), retrying…`);
         await new Promise(r => setTimeout(r, attempt * 500));
       }
-
-      console.error('Profile never appeared after 5 attempts');
       return null;
     };
 
-    // Check existing session on mount
+    // ── STEP 1: Restore session from localStorage on every page load ──
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!mounted) return;
-
       if (session?.user) {
+        setLoading(true);
         const profile = await fetchProfile(session.user.id);
         if (mounted) {
           setUser(profile);
           setLoading(false);
         }
       } else {
-        if (mounted) setLoading(false);
+        setUser(null);
+        setLoading(false);
       }
+      // ── Only show the app AFTER we know the session state ──
+      if (mounted) setBootDone(true);
     });
 
-    // Listen for auth changes
+    // ── STEP 2: Keep listening for future auth changes ──
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!mounted) return;
-
         if (event === 'SIGNED_OUT' || !session) {
           setUser(null);
           setLoading(false);
           return;
         }
-
         if (event === 'SIGNED_IN' && session?.user) {
+          // Only re-fetch if we don't already have this user loaded
+          const currentUser = useAuthStore.getState().user;
+          if (currentUser?.id === session.user.id) return;
           setLoading(true);
           const profile = await fetchProfile(session.user.id);
           if (mounted) {
@@ -125,10 +109,12 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // ── Block the entire app until first session check completes ──
+  if (!bootDone) return <LoadingScreen />;
+
   return <>{children}</>;
 }
 
-// ── Main Router ───────────────────────────────────────────────
 export default function DeskRouter() {
   return (
     <QueryClientProvider client={queryClient}>
