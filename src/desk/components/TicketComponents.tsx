@@ -46,7 +46,51 @@ export function SourceBadge({ source }: { source: TicketSource }) {
   );
 }
 
-export function TicketCard({ ticket, onClick, showAssignee = false }: { ticket: Ticket; onClick?: () => void; showAssignee?: boolean }) {
+// ── SLA Timer Badge ───────────────────────────────────────────
+export function SLABadge({ due, status }: { due: string | null; status: TicketStatus }) {
+  if (!due || status === 'solved') return null;
+  const diff = new Date(due).getTime() - Date.now();
+  const hours = Math.floor(diff / 3600000);
+  const mins = Math.floor((diff % 3600000) / 60000);
+
+  if (diff < 0) return (
+    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800">
+      ⚠ SLA Breached
+    </span>
+  );
+  if (hours < 2) return (
+    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+      ⏱ {hours}h {mins}m left
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-md bg-green-50 dark:bg-green-950/40 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800">
+      ✓ SLA {hours}h left
+    </span>
+  );
+}
+
+// ── Tag Badge ─────────────────────────────────────────────────
+export function TagBadge({ name, color }: { name: string; color: string }) {
+  return (
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white"
+      style={{ backgroundColor: color }}
+    >
+      {name}
+    </span>
+  );
+}
+
+// ── Ticket Card ───────────────────────────────────────────────
+export function TicketCard({
+  ticket, onClick, showAssignee = false, extraBadge,
+}: {
+  ticket: Ticket;
+  onClick?: () => void;
+  showAssignee?: boolean;
+  extraBadge?: React.ReactNode;
+}) {
   const timeAgo = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
@@ -70,12 +114,18 @@ export function TicketCard({ ticket, onClick, showAssignee = false }: { ticket: 
             <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">#{ticket.id.slice(0, 8)}</span>
           </div>
           <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 mb-3">{ticket.summary}</p>
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <SourceBadge source={ticket.source} />
             <PriorityBadge priority={ticket.priority} />
+            <SLABadge due={ticket.sla_resolve_due} status={ticket.status} />
+            {extraBadge}
             {showAssignee && ticket.assignee && (
               <span className="text-xs text-gray-500 dark:text-gray-400">→ {ticket.assignee.full_name}</span>
             )}
+            {/* Tags */}
+            {ticket.ticket_tags?.map(tt => (
+              <TagBadge key={tt.tag.id} name={tt.tag.name} color={tt.tag.color} />
+            ))}
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 flex-shrink-0">
@@ -113,7 +163,9 @@ export function TicketSkeleton() {
   );
 }
 
-export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
+export function PageHeader({ title, subtitle, action }: {
+  title: string; subtitle?: string; action?: React.ReactNode;
+}) {
   return (
     <div className="flex items-start justify-between gap-4 px-4 py-5 md:px-6 md:py-6 border-b border-gray-200 dark:border-gray-800">
       <div>
@@ -134,6 +186,48 @@ export function StatsRow({ stats }: { stats: { label: string; value: number | st
           <p className={`text-2xl font-semibold ${s.color ?? 'text-gray-900 dark:text-white'}`}>{s.value}</p>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── CSAT Stars ────────────────────────────────────────────────
+export function CSATStars({ rating, onRate }: { rating: number; onRate?: (r: number) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          onClick={() => onRate?.(star)}
+          className={`text-2xl transition-transform hover:scale-110 ${onRate ? 'cursor-pointer' : 'cursor-default'} ${star <= rating ? 'text-amber-400' : 'text-gray-200 dark:text-gray-700'}`}
+        >
+          ★
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Agent Collision Avatars ───────────────────────────────────
+export function ViewerAvatars({ viewers }: { viewers: { user_id: string; user?: { full_name: string } }[] }) {
+  if (!viewers || viewers.length === 0) return null;
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-xs text-gray-400 dark:text-gray-500">Also viewing:</span>
+      <div className="flex -space-x-2">
+        {viewers.slice(0, 5).map((v) => {
+          const initials = (v.user?.full_name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+          return (
+            <div
+              key={v.user_id}
+              title={v.user?.full_name}
+              className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/40 border-2 border-white dark:border-gray-900 flex items-center justify-center text-xs font-semibold text-violet-700 dark:text-violet-300"
+            >
+              {initials}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
