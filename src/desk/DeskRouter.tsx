@@ -43,7 +43,9 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   const { setUser, setLoading, darkMode } = useAuthStore();
   // ── KEY FIX: block rendering until initial session check is done ──
   const [bootDone, setBootDone] = useState(false);
-
+useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode);
+  }, [darkMode]);
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
     let mounted = true;
@@ -135,6 +137,7 @@ export default function DeskRouter() {
 
             <Route path="manager" element={<RequireAuth roles={['manager']}><AgentDashboard /></RequireAuth>} />
             <Route path="manager/tickets" element={<RequireAuth roles={['manager']}><AgentDashboard /></RequireAuth>} />
+            <Route path="manager/tickets/new" element={<RequireAuth roles={['manager']}><NewTicketPage /></RequireAuth>} />
             <Route path="manager/tickets/:id" element={<RequireAuth roles={['manager']}><TicketDetail basePath="manager" /></RequireAuth>} />
             <Route path="manager/team" element={<RequireAuth roles={['manager']}><TeamPage /></RequireAuth>} />
             <Route path="manager/reports" element={<RequireAuth roles={['manager']}><ReportsPage /></RequireAuth>} />
