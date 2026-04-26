@@ -7,7 +7,6 @@ import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../store/authStore';
 import { PageHeader } from '../components/TicketComponents';
 import { notifyTicketCreated } from '../lib/email';
-import type { TicketSource, TicketPriority } from '../types';
 
 const ticketSchema = z.object({
   contact_name: z.string().min(1, 'Name is required'),
