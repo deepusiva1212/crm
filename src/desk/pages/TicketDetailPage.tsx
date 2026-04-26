@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase, getPublicUrl } from '../lib/supabase';
@@ -276,9 +276,6 @@ export function TicketDetail({ basePath }: { basePath: 'portal' | 'agent' | 'man
   if (!ticket) return <div className="p-6 text-gray-500">Ticket not found</div>;
 
   const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-  const formatDate = (d: string) => new Date(d).toLocaleString('en-IN', {
-    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
   const isAudio = (mime: string) => mime.startsWith('audio/');
   const isImage = (mime: string) => mime.startsWith('image/');
   const existingTagIds = ticket.ticket_tags?.map(tt => tt.tag.id) || [];
@@ -331,16 +328,24 @@ export function TicketDetail({ basePath }: { basePath: 'portal' | 'agent' | 'man
         <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-4">{ticket.contact_name}</h2>
           <div className="grid grid-cols-2 gap-y-3 gap-x-6 text-sm mb-4">
-            <div><span className="text-xs text-gray-400 dark:text-gray-500 block">Mobile</span><span className="text-gray-900 dark:text-white font-medium">{ticket.contact_mobile}</span></div>
-            <div><span className="text-xs text-gray-400 dark:text-gray-500 block">Source</span><SourceBadge source={ticket.source} /></div>
-            <div><span className="text-xs text-gray-400 dark:text-gray-500 block">Created by</span><span className="text-gray-900 dark:text-white">{ticket.creator?.full_name}</span></div>
-            <div><span className="text-xs text-gray-400 dark:text-gray-500 block">Created at</span><span className="text-gray-900 dark:text-white">{formatDate(ticket.created_at)}</span></div>
-            {ticket.assignee && <div><span className="text-xs text-gray-400 dark:text-gray-500 block">Assigned to</span><span className="text-gray-900 dark:text-white">{ticket.assignee.full_name}</span></div>}
-            {ticket.first_response_at && <div><span className="text-xs text-gray-400 dark:text-gray-500 block">First response</span><span className="text-gray-900 dark:text-white">{formatDate(ticket.first_response_at)}</span></div>}
-            {ticket.sla_response_due && <div><span className="text-xs text-gray-400 dark:text-gray-500 block">Response due</span><span className="text-gray-900 dark:text-white">{formatDate(ticket.sla_response_due)}</span></div>}
-            {ticket.sla_resolve_due && <div><span className="text-xs text-gray-400 dark:text-gray-500 block">Resolve due</span><span className="text-gray-900 dark:text-white">{formatDate(ticket.sla_resolve_due)}</span></div>}
-            {ticket.solved_at && <div><span className="text-xs text-gray-400 dark:text-gray-500 block">Solved at</span><span className="text-gray-900 dark:text-white">{formatDate(ticket.solved_at)}</span></div>}
-          </div>
+  <div>
+    <span className="text-xs text-gray-400 dark:text-gray-500 block">Mobile</span>
+    <span className="text-gray-900 dark:text-white font-medium">{ticket.contact_mobile}</span>
+  </div>
+  <div>
+    <span className="text-xs text-gray-400 dark:text-gray-500 block">Source</span>
+    <SourceBadge source={ticket.source} />
+  </div>
+  {(ticket as any).customer_email && (
+    <div className="col-span-2">
+      <span className="text-xs text-gray-400 dark:text-gray-500 block">Customer email</span>
+      <a href={`mailto:${(ticket as any).customer_email}`}
+        className="text-violet-600 dark:text-violet-400 hover:underline text-sm">
+        {(ticket as any).customer_email}
+      </a>
+    </div>
+  )}
+</div>
           <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
             <span className="text-xs text-gray-400 dark:text-gray-500 block mb-2">Summary</span>
             <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{ticket.summary}</p>
@@ -370,18 +375,29 @@ export function TicketDetail({ basePath }: { basePath: 'portal' | 'agent' | 'man
               </div>
             ))}
           </div>
-          {showTagPanel && availableTags.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
-              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Click to add:</p>
-              <div className="flex flex-wrap gap-2">
-                {availableTags.map(tag => (
-                  <button key={tag.id} onClick={() => addTag.mutate(tag.id)}>
-                    <TagBadge name={tag.name} color={tag.color} />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {showTagPanel && (
+  <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+    {availableTags.length === 0 ? (
+      <p className="text-xs text-gray-400 dark:text-gray-500">
+        No more tags available.{' '}
+        <span className="text-violet-600 dark:text-violet-400">
+          Create tags in Manager → Reports → Tag Manager.
+        </span>
+      </p>
+    ) : (
+      <>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Click to add:</p>
+        <div className="flex flex-wrap gap-2">
+          {availableTags.map(tag => (
+            <button key={tag.id} onClick={() => { addTag.mutate(tag.id); setShowTagPanel(false); }}>
+              <TagBadge name={tag.name} color={tag.color} />
+            </button>
+          ))}
+        </div>
+      </>
+    )}
+  </div>
+)}
         </div>
 
         {/* ── Attachments ── */}
